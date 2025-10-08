@@ -5,42 +5,66 @@ namespace App\Models;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
-use Spatie\Permission\Traits\HasRoles;
+use App\Models\Concerns\UsesUuid;
 
 class User extends Authenticatable
 {
-    use HasApiTokens, HasRoles, Notifiable;
+    use HasApiTokens, UsesUuid, Notifiable;
 
     /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
-    public $incrementing = false;
-    
+    * The attributes that aren't mass assignable.
+    *
+    * @var array<string>|bool
+    */
+    protected $guarded = [];
 
     /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var array<int, string>
+     * Bootstrap the model / all traits.
      */
-    protected $keyType = 'string';
-    protected $fillable = [
-        'id',
-        'name',
-        'email',
-        'password',
-        'facility_id',
-        'meta'
-    ];
-    
+    protected static function boot()
+    {
+        parent::boot();
+        static::bootUsesUuid();  // assign UUID if a fixed ID hasn't already been set
+    }
 
     /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
+     * One-to-many relation with AuthIdentities (one user has many auth identities)
      */
-    protected $casts = ['meta' => 'array'];
+    public function identities()
+    {
+        return $this->hasMany(AuthIdentity::class);
+    }
 
-    public function facility() { return $this->belongsTo(Facility::class); }
+    /**
+     * Many-to-one relation with Roles (each user has only one role)
+     */
+    public function role()
+    {
+        return $this->belongsTo(Role::class);
+    }
+
+    /**
+     * Accessor for permissions
+     * Technically this is a many-to-many relation through roles
+     * collect(null) here represents a null collection; this is to prevent
+     * errors arising from later uses of array fns on null.
+     * We recommend this convention for accessors, for null safety
+     */
+    public function permissions()
+    {
+        return $this->role ? $this->role->permissions() : collect(null);
+    }
+
+    /**
+     * Utility for permission-checking
+     * This is useful for checking whether a user has the permission
+     * to invoke a particular API call
+     */
+    public function hasPermission(string $slug): bool
+    {
+        // eager loading of permissions to avoid n+1 query problem
+        $role = $this->role()->with('permissions')->first();
+        if (! $role) return false;
+        return $role->permissions->contains('slug', $slug);
+    }
 }
